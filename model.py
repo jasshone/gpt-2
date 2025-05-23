@@ -1,3 +1,92 @@
+import torch.nn as nn
+class feed_forward(nn.Module):
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.model = nn.Sequential(
+            nn.LayerNorm(embedding_dim),
+            nn.Linear(embedding_dim, 4*embedding_dim),
+            nn.ReLU(),
+            nn.Linear(4*embedding_dim, embedding_dim)
+
+        )
+    def forward(self, x):
+        return self.model(x)
+class decoder(nn.Module):
+    def __init__(self, B, seq_len, embedding_dim, dk, dv, n_heads, N_blocks, vocab_size):
+        super().__init__()
+        self.B = B
+        self.seq_len = B
+        self.embedding_dim = embedding_dim
+        self.dk = dk
+        self.dv = dv
+        self.n_heads = n_heads
+        self.vocab_size = vocab_size
+        self.N_blocks = N_blocks
+        self.decoder_blocks = [decoder_block(B, seq_len, embedding_dim, dk, dv, n_heads) for i in range(N_blocks)]
+        self.blocks = nn.Sequential(*self.decoder_blocks)
+        self.linear = nn.Linear(self.embedding_dim, self.vocab_size)
+        self.norm = nn.LayerNorm(self.embedding_dim)
+
+    def forward(self, x):
+        out = self.blocks(x)
+        out = self.blocks(out)
+        out = self.norm(out)
+        out = self.linear(out)
+        out = torch.softmax(out, dim = -1)
+        return out
+
+class decoder_block(nn.Module):
+    def __init__(self, B, seq_len, embedding_dim, dk, dv, n_heads):
+        super().__init__()
+        self.multi_at = multi_head_attention(B, seq_len, embedding_dim, dk, dv, n_heads, True)
+        self.norm = nn.LayerNorm(embedding_dim)
+        self.feed_forward = feed_forward(embedding_dim)
+    def forward(self, x):
+        out = self.norm(x)
+        out = x + self.multi_at(out)
+        return self.feed_forward(out)
+
+class multi_head_attention(nn.Module):
+    def __init__(self, B, seq_len, embedding_dim, dk, dv, n_heads, mask):
+        super().__init__()
+        self.heads = [attention_head(B, seq_len, embedding_dim, dk, dv, mask) for i in range(n_heads)]
+        self.Wo = nn.Parameter(torch.nn.init.normal_(torch.zeros(n_heads * dv,embedding_dim), 0, 0.02))
+        self.linear = nn.Linear(embedding_dim, embedding_dim)
+        self.B = B
+    def forward(self, x):
+        concat = []
+        for head in self.heads:
+            concat.append(head(x))
+            concat = torch.concat(concat, dim = -1)
+            out = concat @ self.Wo.unsqueeze(0).expand(self.B,-1, -1)
+            return self.linear(out)
+
+class attention_head(nn.Module):
+    def __init__(self, B, seq_len, embedding_dim, dk, dv, mask):
+        super().__init__()
+        self.B = B
+        self.seq_len = seq_len
+        self.dk = dk
+        self.dv = dv
+        self.embedding_dim = embedding_dim
+        self.Wq = nn.Parameter(nn.init.normal_(torch.rand(embedding_dim,dk).to(device), 0, 0.02))
+        self.Wk = nn.Parameter(nn.init.normal_(torch.rand(embedding_dim,dk).to(device), 0, 0.02))
+        self.mask = mask
+        self.Wv = nn.Parameter(torch.nn.init.normal_(torch.rand(embedding_dim,dv).to(device), 0, 0.02))
+    def forward(self, x):
+        Q = x @ self.Wq.unsqueeze(0).expand(self.B,-1, -1)
+        K = x @ self.Wk.unsqueeze(0).expand(self.B,-1, -1)
+        V = x @ self.Wv.unsqueeze(0).expand(self.B,-1, -1)
+
+        QKT = torch.bmm(Q,torch.transpose(K, 1, 2))
+        if self.mask:
+            QKT = torch.triu(QKT.transpose(1, 2), diagonal = 1).transpose(1,2)
+            QKT = torch.masked_fill(QKT, QKT.bool(), -torch.inf)
+            #diff = att(x,x,x)[0]- (torch.softmax(QKT/(self.dk**(1/2)), dim = -1)@ V)
+            #print(torch.max(diff))
+        return torch.softmax(QKT/(self.dk**(1/2)), dim = -1)@ V
+
 class Transformer(pl.LightningModule):
     def __init__(self, B, seq_len, embedding_dim, dk, dv, n_heads, N_blocks, vocab_size, device):
         super().__init__()

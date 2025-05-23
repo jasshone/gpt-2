@@ -7,8 +7,8 @@ class feed_forward(nn.Module):
             nn.LayerNorm(embedding_dim),
             nn.Linear(embedding_dim, 4*embedding_dim),
             nn.ReLU(),
-            nn.Linear(4*embedding_dim, embedding_dim)
-
+            nn.Linear(4*embedding_dim, embedding_dim),
+            nn.dropout(0.1)
         )
     def forward(self, x):
         return self.model(x)
@@ -54,13 +54,15 @@ class multi_head_attention(nn.Module):
         self.Wo = nn.Parameter(torch.nn.init.normal_(torch.zeros(n_heads * dv,embedding_dim), 0, 0.02))
         self.linear = nn.Linear(embedding_dim, embedding_dim)
         self.B = B
+        self.dropout = nn.Dropout(0.1)
     def forward(self, x):
         concat = []
         for head in self.heads:
             concat.append(head(x))
-            concat = torch.concat(concat, dim = -1)
-            out = concat @ self.Wo.unsqueeze(0).expand(self.B,-1, -1)
-            return self.linear(out)
+        concat = torch.concat(concat, dim = -1)
+        out = concat @ self.Wo.unsqueeze(0).expand(self.B,-1, -1)
+        out = self.linear(out)
+        return self.dropout(out)
 
 class attention_head(nn.Module):
     def __init__(self, B, seq_len, embedding_dim, dk, dv, mask):
@@ -99,6 +101,7 @@ class Transformer(pl.LightningModule):
         self.pos_encoding = None
         self.loss_fn = nn.CrossEntropyLoss()
         self.device = device
+        self.dropout = nn.Dropout(0.1)
 
     def get_pos_encoding(self, x):
         if self.pos_encoding is not None: return self.pos_encoding
@@ -118,6 +121,7 @@ class Transformer(pl.LightningModule):
     def forward(self, x):
         #print(self.lookup(x).shape, self.get_pos_encoding(x).shape)
         x = self.lookup(x) + self.get_pos_encoding(x).to(self.device)
+        x = self.dropout(x)
         return self.decoder(x)
 
     def training_step(self, batch, batch_idx):

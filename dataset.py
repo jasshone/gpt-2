@@ -9,7 +9,7 @@ class ShakespeareData(torch.utils.data.Dataset):
         tokenizer = AutoTokenizer.from_pretrained("openai-community/openai-gpt")
         tokenized_data = []
         for i in text.split("\n"):
-                tokenized_data.append(torch.tensor(tokenizer(i)['input_ids']))
+            tokenized_data.append(torch.tensor(tokenizer(i)['input_ids']))
         final_data = torch.cat(tokenized_data)
         self.tokenized_data = final_data
         self.seqlen = seqlen
